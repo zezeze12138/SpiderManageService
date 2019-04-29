@@ -9,9 +9,8 @@ class ScrapyConfig(models.Model):
     firstTopic = models.CharField(max_length=10)
     secondTopic = models.CharField(max_length=10)
     timing = models.CharField(max_length=10)
-    #isclassify = models.CharField(max_length=10)
+    isclassify = models.CharField(max_length=10)
     filePath = models.CharField(max_length=200)
-
 
 class Storage(models.Model):
     id = models.CharField(primary_key=True,max_length=30)

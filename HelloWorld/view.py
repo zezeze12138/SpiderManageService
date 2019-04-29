@@ -15,6 +15,8 @@ from django.core import serializers
 import os
 import zipfile
 import uuid
+from apscheduler.scheduler import Scheduler
+from time import sleep
 
 def hello(request):
     #resp = {'errorcode': 100, 'detail': 'Get success'}
@@ -26,6 +28,20 @@ def hello(request):
 
     return JsonResponse(json_result)
 
+#设置定时任务
+def setTimingByProgramName(request):
+    if(request.method == 'POST'):
+        postBody = request.body
+        print (postBody)
+        postJson = json.loads(postBody)
+        programList = postJson["programList"]
+        timing = postJson["timing"]
+        for i in range(len(programList)):
+            models.ScrapyConfig.objects.filter(program=programList[i]).update(timing=timing)
+        json_result = {"data":"success"}
+    return JsonResponse(json_result)
+
+
 #修改是否进行分类的状态
 def chargeClassifyStatus(request):
     if(request.method == 'POST'):
@@ -34,7 +50,7 @@ def chargeClassifyStatus(request):
         postJson = json.loads(postBody)
         projectName = postJson["project"]
         isclassify = postJson["isclassify"]
-        #models.ScrapyConfig.objects.filter(program=projectName).update(isclassify=isclassify)
+        models.ScrapyConfig.objects.filter(program=projectName).update(isclassify=isclassify)
         json_result = {"data":"success"}
     return JsonResponse(json_result)
 
@@ -352,3 +368,51 @@ def scrapyStatusNow(data,jobId):
             if finished["id"] == jobId:
                 print("finished:----------------")
                 return 1
+
+#定时任务，轮询需要运行的爬虫，时间间隔1分钟
+#精度为1分钟，获取到运行的爬虫名称后，将爬虫放入线程，推迟两分钟后运行，避免多次启动爬虫
+sched = Scheduler()
+@sched.interval_schedule(seconds=60)
+def my_task1():
+    print('定时任务1开始\n')
+    nowtime = time.strftime("%H:%M",time.localtime(time.time()))
+    obj = models.ScrapyConfig.objects.exclude(timing='').filter(timing__isnull=False)
+    data = json.loads(serializers.serialize("json", obj))
+    for i in range(len(data)):
+        if nowtime == data[i]["fields"]["timing"]:
+            programName = data[i]["fields"]["program"]
+            spiderName = data[i]["fields"]["scrapy"]
+            print(programName)
+            print(spiderName)
+            try:
+                _thread.start_new_thread(startSpider, (programName,spiderName))
+            except:
+                print("Error: unable to start thread")
+    print(nowtime)
+    print('定时任务1结束\n')
+
+sched.start()
+
+
+#启动爬虫方法
+def startSpider(programName,spiderName):
+    #推迟两分钟后运行
+    time.sleep(120)
+    #获取请求体内容
+    postD = {"project":programName,"spider":spiderName}
+    postData = bytes(urllib.parse.urlencode(postD).encode('utf-8'))
+    requrl = "http://127.0.0.1:6800/schedule.json"
+    req = urllib.request.Request(url=requrl,data=postData)
+    print (req)
+    res_data = urllib.request.urlopen(req)
+    res = res_data.read()
+    #获取返回结果，如果启动成功，则进行心跳检测
+    result = eval(str(res, encoding = "utf-8"))
+    status = result["status"]
+    if status == 'ok':
+        jobId = result["jobid"]
+        #心跳检测线程
+        try:
+            _thread.start_new_thread(scrapyRunHeartBeat, (programName,jobId))
+        except:
+            print("Error: unable to start thread")

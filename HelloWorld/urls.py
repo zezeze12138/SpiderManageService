@@ -10,6 +10,7 @@ urlpatterns = [
     url(r"^getItemList",view.getItemListByScrapyName),
     url(r"^getListJob",view.getListJob),
     url(r"^chargeClassifyStatus",view.chargeClassifyStatus),
+    url(r"^setTimingByProgramName",view.setTimingByProgramName),
     url(r"^addScrapyConfigAndUploadProgram",view.addScrapyConfigAndUploadProgram),
     url(r"^startSpider",view.startSpider),
     url(r"^deleteSpider",view.deleteSpider),
