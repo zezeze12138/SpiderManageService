@@ -1,7 +1,7 @@
-__author__ = 'zengqzhen'
+#coding=utf-8
 import os
 import json
-from multi import *
+from HelloWorld.DOMparse.multi import *
 import pymysql
 import uuid
 import time
@@ -17,12 +17,34 @@ def dbHandle():
 
 class ScrapydModel:
 
+    #查看是否分类完成，未完成未1，完成为0
+    def isClassifyFinish(self,firstTopicId):
+        dbObject = dbHandle()
+        cursor = dbObject.cursor()
+        cursor.execute("USE news")
+        sqlselect = "select count(*) from tb_article_other where FirstTopic_id = %s and SecondTopic_id is null"
+        try:
+            cursor.execute(sqlselect,(firstTopicId))
+            cursor.connection.commit()
+            rows = cursor.fetchall()
+            newsNumber = rows[0][0]
+            if newsNumber > 0:
+                return 1
+            else:
+                return 0
+        except BaseException as e:
+            print("错误在这里>>>>>>>>>>>>>",e,"<<<<<<<<<<<<<错误在这里")
+            dbObject.rollback()
+
+
     #调用分类算法
     def mutilNews(self,NewsTopicId):
         #predict
         allArticleIds,allResultIds = predictNewsTopic(NewsTopicId)
         print(allArticleIds)
+        print(len(allArticleIds))
         print(allResultIds)
+        print(len(allResultIds))
         dbObject = dbHandle()
         cursor = dbObject.cursor()
         cursor.execute("USE news")
@@ -49,7 +71,7 @@ class ScrapydModel:
             #对每一条即将插入推送表的数据进行操作
             for row in rows:
                 #创建新的文章id
-                Article_id = uuid.uuid1()
+                Article_id = str(uuid.uuid1())[0:16]
                 #将爬取并且分类好的新文章插入推送表
                 sql = "INSERT INTO tb_article_other_old(Article_id,Article_name,Article_title,Article_context,Article_context_html,Separate_context,FirstTopic_id,SecondTopic_id,Date) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)"
                 cursor.execute(sql,(str(Article_id),str(Article_id),row[2],row[3],row[4],row[5],row[6],row[7],row[8]))
@@ -66,3 +88,10 @@ class ScrapydModel:
         except BaseException as e:
             print("错误在这里>>>>>>>>>>>>>",e,"<<<<<<<<<<<<<错误在这里")
             dbObject.rollback()
+
+
+#if __name__ == "__main__":
+    #number = ScrapydModel.isClassifyFinish("11")
+    #print(number)
+    #ScrapydModel.mutilNews("11")
+    #ScrapydModel.UpdateArticleTable("11")

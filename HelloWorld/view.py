@@ -3,6 +3,9 @@ from django.shortcuts import render
 from django.http import HttpResponse
 from django.http import JsonResponse, FileResponse
 from HelloWorld.DOMparse import ParseXml
+from HelloWorld.DOMparse import ScrapyJsonToXml
+from HelloWorld.DOMparse import CreateScrapyProgram
+from HelloWorld.DOMparse import ScrapydModel
 import json
 import xml.etree.ElementTree as ET
 from HelloWorld import models
@@ -18,6 +21,13 @@ import uuid
 from apscheduler.scheduler import Scheduler
 from time import sleep
 
+#爬虫服务器地址
+SCRAPYD_IP = 'http://127.0.0.1:6800'
+#爬虫程序存放地址
+SCRAPY_PROGRAM_PATH = 'F:/autoScrapy'
+#xml文件临时存放位置
+XML_TEMP_PATH = 'F:/autoScrapyTemp'
+
 def hello(request):
     #resp = {'errorcode': 100, 'detail': 'Get success'}
     if(request.method == 'POST'):
@@ -27,6 +37,86 @@ def hello(request):
         json_result = json.loads(postBody)
 
     return JsonResponse(json_result)
+
+#删除爬虫配置
+def deleteScrapyConfig(request):
+    if(request.method == 'POST'):
+        postBody = request.body
+        print (postBody)
+        postJson = json.loads(postBody)
+        programName = postJson["programName"]
+        status = postJson["status"]
+        if status != '0':
+            json_result = {"data":"false"}
+            return JsonResponse(json_result)
+        else:
+            models.ScrapyConfig.objects.filter(program=programName).delete()
+            json_result = {"data":"true"}
+    return JsonResponse(json_result)
+
+#通过xmlId生成爬虫程序，下载接口
+def downloadScrapyProgramByXmlName(request):
+    if(request.method == 'POST'):
+        postBody = request.body
+        print (postBody)
+        postJson = json.loads(postBody)
+        xmlId = postJson["xmlId"]
+        programName = postJson["programName"]
+        xmlPath = XML_TEMP_PATH + '/' + xmlId + '.xml'
+        xmlfile=open(xmlPath,'rb')
+        xmlStr = xmlfile.read()
+        xmlfile.close()
+        xmlStr = str(xmlStr, encoding = "utf8")
+        print(xmlStr)
+        #创建爬虫程序
+        createScrapyProgram = CreateScrapyProgram.CreateScrapyProgram()
+        zipfilePath = createScrapyProgram.CreateScrapyProgramAjax(xmlStr,programName)
+
+        file=open(zipfilePath,'rb')
+        response =HttpResponse(file)
+        response['Content-Type']='application/octet-stream'
+        response['Content-Disposition']='attachment;filename='+ programName +'.zip'
+    return response
+
+
+#上传爬虫xml文件，下载爬虫程序
+def uploadXml(request):
+    if(request.method == 'POST'):
+        file = request.FILES.get("file", None)
+        nPos=file.name.index('.')
+        programName = str(file.name)[0:nPos]
+        xmlId = str(uuid.uuid1())
+        filename = os.path.join("F://autoScrapyTemp",xmlId+'.xml')
+        fobj = open(filename,'wb');
+        for chrunk in file.chunks():
+            fobj.write(chrunk);
+        fobj.close();
+        json_result = {"data":xmlId,"programName":programName}
+    return JsonResponse(json_result)
+
+
+#创建爬虫程序
+def createScrapyProgramAndDownload(request):
+    if(request.method == 'POST'):
+        #获取请求体内容
+        postBody = request.body
+        #获取参数
+        json_result = json.loads(postBody)
+        projectName = json_result["projectName"]
+        scrapyForm = json_result["scrapyForm"]
+        #生成爬虫xml
+        scrapyProgramXml = ScrapyJsonToXml.ScrapyJsonToXml()
+        xmlResult = scrapyProgramXml.ScrapyJsonToXmlModel2(scrapyForm)
+        #创建爬虫程序
+        createScrapyProgram = CreateScrapyProgram.CreateScrapyProgram()
+        zipfilePath = createScrapyProgram.CreateScrapyProgramAjax(xmlResult,projectName)
+
+        file=open(zipfilePath,'rb')
+        response =HttpResponse(file)
+        response['Content-Type']='application/octet-stream'
+        response['Content-Disposition']='attachment;filename='+ projectName +'.zip'
+        #response['Content-Disposition'] = 'attachment;filename="{0}"'.format(file_name)
+    return response
 
 #设置定时任务
 def setTimingByProgramName(request):
@@ -103,7 +193,7 @@ def deploySpider(request):
         projectName = postJson["project"]
         scrapyName = postJson["scrapy"]
         #进入爬虫项目
-        projectcmd = 'F:/autoScrapy/'+projectName+'/'
+        projectcmd = SCRAPY_PROGRAM_PATH+ '/'+projectName+'/'
         print (projectcmd)
         os.chdir(projectcmd)
         #部署前运行命令
@@ -115,7 +205,7 @@ def deploySpider(request):
         print (deploycmd)
         os.system(deploycmd)
         #发送请求，查看是否部署成功
-        requrl = "http://127.0.0.1:6800/listprojects.json"
+        requrl = str(SCRAPYD_IP + '/listprojects.json')
         req = urllib.request.Request(url=requrl)
         print (req)
         res_data = urllib.request.urlopen(req)
@@ -164,9 +254,8 @@ def startSpider(request):
         postJson = json.loads(postBody)
         postD = {"project":postJson["project"],"spider":postJson["spider"]}
         postData = bytes(urllib.parse.urlencode(postD).encode('utf-8'))
-        #postData = parse.urlencode(str(postBody)).encode('utf-8')
         print (postBody)
-        requrl = "http://127.0.0.1:6800/schedule.json"
+        requrl = str(SCRAPYD_IP + '/schedule.json')
         req = urllib.request.Request(url=requrl,data=postData)
         print (req)
         res_data = urllib.request.urlopen(req)
@@ -197,15 +286,13 @@ def deleteConfig(request):
     return JsonResponse(json_result)
 
 #获取爬虫所爬item列表
-def getItemListByScrapyName(request):
+def getItemListByProgramName(request):
     if(request.method == 'GET'):
-        scrapyName = request.GET["scrapyName"]
-        obj = models.Storage.objects.filter(scrapy=scrapyName)
+        programName = request.GET["programName"]
+        obj = models.ScrapyConfig.objects.filter(program=programName)
         data = json.loads(serializers.serialize("json", obj))
-    json_result = {"data":""}
+    json_result = {"data":data}
     return JsonResponse(json_result)
-
-
 
 #获取爬虫配置列表
 def getScrapyConfigList(request):
@@ -227,8 +314,6 @@ def SpiderData(request):
         EditScarpyProgram = ParseXml.ParseXml()
         EditScarpyProgram.CreateScarpyProgram(xmldoc)
         #执行爬虫程序，返回结果集mangoDB
-
-
     json_result = {"function":"spiderData"}
     return JsonResponse(json_result)
 
@@ -268,64 +353,21 @@ def CreateScrapyXml(request):
 
 #输入json，创建xml
 def editScarpyXml(json_result):
+    ScarpyProgramXml = ScrapyJsonToXml.ScrapyJsonToXml()
+    xml = ScarpyProgramXml.ScrapyJsonToXmlModel2(json_result)
+    return xml
 
-    #读取爬虫标签
-    scrapy_items = json_result["spiderItemList"]
-
-    #生成爬虫xml
-    scrapyRoot = ET.Element("scrapy")
-    scrapyRoot.attrib = {"name" : json_result["scrapyName"]}
-
-    #  1.爬虫初始化部分
-    spider = ET.SubElement(scrapyRoot,"spider")
-    #爬虫名称
-    spider_name = ET.SubElement(spider,"name")
-    spider_name.text = json_result["spiderName"]
-    #爬虫过滤域名
-    spider_allowed_domains = ET.SubElement(spider,"allowed_domains")
-    spider_allowed_domains.text = json_result["allowed_domains"]
-    #爬虫起始地址
-    spider_start_urls = ET.SubElement(spider,"start_urls")
-    spider_start_urls.text = json_result["start_uls"]
-
-    #  1.1.爬虫主逻辑部分
-    spider_parse = ET.SubElement(spider,"parse")
-    #页面urls位置
-    spider_parse_reponse = ET.SubElement(spider_parse,"response")
-    spider_parse_reponse_xpath = ET.SubElement(spider_parse_reponse,"xpath")
-    spider_parse_reponse_xpath.text = json_result["response_urls"]
-    #获取item内容与爬取链接
-    spider_parse_xpaths = ET.SubElement(spider_parse,"xpaths")
-    for item in scrapy_items:
-        spider_parse_xpaths_xpath = ET.SubElement(spider_parse_xpaths,"xpath")
-        spider_parse_xpaths_xpath.attrib = {"item" : item["item"]}
-        spider_parse_xpaths_xpath.text = item["xpath"]
-
-    #  2.爬虫item项目部分
-    items = ET.SubElement(scrapyRoot,"items")
-    for item in scrapy_items:
-        items_item = ET.SubElement(items,"item")
-        items_item.text = item["item"]
-
-    scrapyXml = ET.ElementTree(scrapyRoot)
-    indent(scrapyRoot)
-    return str(ET.tostring(scrapyRoot),encoding="utf8")
-
-
-def indent(elem, level=0):
-    i = "\n" + level*"\t"
-    if len(elem):
-        if not elem.text or not elem.text.strip():
-            elem.text = i + "\t"
-        if not elem.tail or not elem.tail.strip():
-            elem.tail = i
-        for elem in elem:
-            indent(elem, level+1)
-        if not elem.tail or not elem.tail.strip():
-            elem.tail = i
-    else:
-        if level and (not elem.tail or not elem.tail.strip()):
-            elem.tail = i
+#输入json，创建xml,返回给前端进行预览
+def ScrapyJsonToXmlStr(request):
+    if(request.method == 'POST'):
+        #获取请求体内容
+        postBody = request.body
+        #读取爬虫初始化信息
+        json_result = json.loads(postBody)
+        scrapyProgramXml = ScrapyJsonToXml.ScrapyJsonToXml()
+        xmlResult = scrapyProgramXml.ScrapyJsonToXmlModel2(json_result)
+    json_result = {"data":xmlResult}
+    return JsonResponse(json_result)
 
 #爬虫状态心跳监测
 def scrapyRunHeartBeat(projectName,jobId):
@@ -347,6 +389,8 @@ def scrapyRunHeartBeat(projectName,jobId):
             #修改数据库配置表状态为爬取完成，回到“已部署状态”
             models.ScrapyConfig.objects.filter(program=projectName).update(status='1',jobId='')
             break
+    #检测是否需要分类
+    isNeedClassify(projectName)
 
 #爬虫状态检查判断，如果是预备状态返回：1  运行状态返回：2   完成返回：3
 def scrapyStatusNow(data,jobId):
@@ -385,17 +429,17 @@ def my_task1():
             print(programName)
             print(spiderName)
             try:
-                _thread.start_new_thread(startSpider, (programName,spiderName))
+                _thread.start_new_thread(startSpiderTiming, (programName,spiderName))
             except:
                 print("Error: unable to start thread")
     print(nowtime)
     print('定时任务1结束\n')
-
+#运行启动定时任务
 sched.start()
 
 
 #启动爬虫方法
-def startSpider(programName,spiderName):
+def startSpiderTiming(programName,spiderName):
     #推迟两分钟后运行
     time.sleep(120)
     #获取请求体内容
@@ -416,3 +460,39 @@ def startSpider(programName,spiderName):
             _thread.start_new_thread(scrapyRunHeartBeat, (programName,jobId))
         except:
             print("Error: unable to start thread")
+
+#判断是否需要分类
+def isNeedClassify(projectName):
+    #获取配置信息，查看该爬虫是否需要分类
+    obj = models.ScrapyConfig.objects.filter(program=projectName)
+    data = json.loads(serializers.serialize("json", obj))
+    isclassify = data[0]["fields"]["isclassify"]
+    firstTopicId = data[0]["fields"]["firstTopic"]
+    #如果isclassify为1，则需要进行分类操作
+    if isclassify == '1':
+        print("需要分类")
+        #修改数据库配置表状态为“正在分类”
+        models.ScrapyConfig.objects.filter(program=projectName).update(status='4')
+        runClassifyModel(firstTopicId,projectName)
+
+#爬虫分类、入库模块
+def runClassifyModel(firstTopicId,projectName):
+    print("进行分类")
+    scrapyModel = ScrapydModel.ScrapydModel()
+    #运行分类模型
+    scrapyModel.mutilNews(firstTopicId)
+    #进入循环，判断是否完成分类
+    while True:
+        time.sleep(1)
+        print("正在分类")
+        if scrapyModel.isClassifyFinish(firstTopicId) == 0:
+            break
+    print("分类结束")
+    #完成分类后将新爬取的数据推入新闻推送表
+    print("新闻更新到推送表")
+    scrapyModel.UpdateArticleTable(firstTopicId)
+    print("新闻更新到推送表结束")
+    #修改数据库配置表状态为爬取完成，回到“已部署状态”
+    models.ScrapyConfig.objects.filter(program=projectName).update(status='1')
+
+

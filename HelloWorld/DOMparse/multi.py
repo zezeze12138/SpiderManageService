@@ -1,5 +1,5 @@
 # This Python file uses the following encoding: utf-8
-import os;
+import os
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.cross_validation import cross_val_score
